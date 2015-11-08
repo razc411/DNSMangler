@@ -5,28 +5,22 @@ import(
 )
 
 func grabAddresses(iface string) (macAddr, ipAddr string){
-	interfaces, err := net.Interfaces();
-	checkError(err);
-	
-	macAddr = "FF:FF:FF:FF:FF:FF";
-	ipAddr = "127.0.0.1"
-	
-	for i, n := range interfaces {
-		if(iface == n.Name){
-			macAddr = n.HardwareAddr.String();
-		}
-	}
 
-	addrs, err := net.InterfaceAddrs();
+	netInterface, err := net.InterfaceByName(iface);
 	checkError(err);
-	
-	for i, n := range addrs {
-		if(n.Network() == iface){
-			ipAddr = n.String();
+
+	macAddr = netInterface.HardwareAddr.String();
+	addrs, _ := netInterface.Addrs();
+	for _, addr := range addrs {
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ipAddr = v.IP.String();
+		case *net.IPAddr:
+			ipAddr = v.IP.String();
 		}
 	}
 	
-	return;
+	return macAddr, ipAddr;
 }
 /* 
     FUNCTION: func checkError(err error)
