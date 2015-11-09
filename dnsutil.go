@@ -2,23 +2,19 @@ package main;
 
 import(
 	"net"
+	"bytes"
+	"encoding/gob"
 )
 
-func grabAddresses(iface string) (macAddr, ipAddr string){
+func grabAddresses(iface string) (macAddr net.HardwareAddr, ipAddr net.IP){
 
-	netInterface, err := net.InterfaceByName(iface);
-	checkError(err);
+	netInterface, err := net.InterfaceByName(iface)
+	checkError(err)
 
-	macAddr = netInterface.HardwareAddr.String();
-	addrs, _ := netInterface.Addrs();
-	for _, addr := range addrs {
-		switch v := addr.(type) {
-		case *net.IPNet:
-			ipAddr = v.IP.String();
-		case *net.IPAddr:
-			ipAddr = v.IP.String();
-		}
-	}
+	macAddr = netInterface.HardwareAddr
+	addrs, _ := netInterface.Addrs()
+	ipAddr, _, err = net.ParseCIDR(addrs[0].String())
+	checkError(err)
 	
 	return macAddr, ipAddr;
 }
@@ -37,3 +33,14 @@ func checkError(err error){
 	}
 }
 
+func GetBytes(key interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(key)
+	if err != nil {
+		return nil, err
+	}
+	
+	return buf.Bytes(), nil
+}
