@@ -1,11 +1,29 @@
 package main;
+/* dnsutil.go
+	PROGRAM: DNSMangler
+	AUTHOR: Ramzi Chennafi
+	DATE: November 5 2015
+	FUNCTIONS:
+		grabAddresses(iface string) (macAddr net.HardwareAddr, ipAddr net.IP)
+		checkError(err error)
 
+	ABOUT:
+		dnsutil.go contains utility functions for use with the DNSMangler program.
+*/
 import(
 	"net"
 	"bytes"
 	"encoding/gob"
 )
+/*
+    FUNCTION: grabAddresses(iface string) (macAddr net.HardwareAddr, ipAddr net.IP){
+    RETURNS: net.HardwareAddr and net.IP, a mac address and ip address respectively
+    ARGUMENTS:
+              iface string - the interface to grab the addresses from
 
+    ABOUT:
+    Grabs the mac and ip addresses from a specific interface.
+*/
 func grabAddresses(iface string) (macAddr net.HardwareAddr, ipAddr net.IP){
 
 	netInterface, err := net.InterfaceByName(iface)
@@ -15,13 +33,13 @@ func grabAddresses(iface string) (macAddr net.HardwareAddr, ipAddr net.IP){
 	addrs, _ := netInterface.Addrs()
 	ipAddr, _, err = net.ParseCIDR(addrs[0].String())
 	checkError(err)
-	
+
 	return macAddr, ipAddr;
 }
-/* 
+/*
     FUNCTION: func checkError(err error)
     RETURNS: Nothing
-    ARGUMENTS: 
+    ARGUMENTS:
               err error : the error code to check
 
     ABOUT:
@@ -31,16 +49,4 @@ func checkError(err error){
 	if err != nil {
 		panic(err)
 	}
-}
-
-func GetBytes(key interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-
-	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(key)
-	if err != nil {
-		return nil, err
-	}
-	
-	return buf.Bytes(), nil
 }
