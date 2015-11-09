@@ -12,8 +12,6 @@ package main;
 */
 import(
 	"net"
-	"bytes"
-	"encoding/gob"
 )
 /*
     FUNCTION: grabAddresses(iface string) (macAddr net.HardwareAddr, ipAddr net.IP){
