@@ -11,13 +11,13 @@ Install the required libraries by executing
 	go get github.comn/goog/gopacket/pcap
 
 To install GoBD execute
-	go install DNSMangler
+   go install DNSMangler
 
 after navigating to the source directory. You should now be able to run the program by typing 
-	DNSMangler
+      DNSMangler
 
 You may also choose to use  
-	go build DNSMangler 
+    go build DNSMangler 
 
 and execute the created executable by typing:
 	DNSMangler [type DNSMangler --help for info on flags]
@@ -34,7 +34,7 @@ DNSMangler is a simple program and has the following flags
 
 For instance, you could execute the program on a system like this.
 
-DNSMangler -targ 32.32.32.32 -targm FF:32:EA:22:22:22 -iface eno0 -gw 31.31.1.100 -gwm FF:32:11:11:11:41
+    DNSMangler -targ 32.32.32.32 -targm FF:32:EA:22:22:22 -iface eno0 -gw 31.31.1.100 -gwm FF:32:11:11:11:41
 
 The mangler will now force all traffic from 32.32.32.32 through its system, and will now recieve
 all traffic from the the gateway destined for 32.32.32.32. While it does this, it will also
